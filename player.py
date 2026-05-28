@@ -168,8 +168,8 @@ class Character:
             moving = dx != 0 or dy != 0
 
             if moving:
-                self.x = max(0, min(sw, self.x + dx * SPEED * dt))
-                self.y = max(0, min(sh, self.y + dy * SPEED * dt))
+                self.x += dx * SPEED * dt
+                self.y += dy * SPEED * dt
 
                 if abs(dx) >= abs(dy):
                     self.direction = DIR_RIGHT if dx > 0 else DIR_LEFT
@@ -182,6 +182,12 @@ class Character:
             else:
                 if not self.locked:
                     self.set_state("idle")
+
+            # Clamp player position to map boundaries (keeping entire rect inside)
+            half_w = self.rect.width // 2
+            half_h = self.rect.height // 2
+            self.x = max(half_w, min(sw - half_w, self.x))
+            self.y = max(half_h, min(sh - half_h, self.y))
 
             self.rect.center = (int(self.x), int(self.y))
             self.pos.update(self.x, self.y)

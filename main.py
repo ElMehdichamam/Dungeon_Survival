@@ -141,7 +141,7 @@ while running:
     wave_mgr.update(dt)
 
     for e in enemies:
-        e.update(dt, player_vec, player)
+        e.update(dt, player_vec, player, WIDTH, HEIGHT)
 
     # Remove dead enemies after death anim finishes
     for e in [x for x in enemies if x.state == "dead" and x.anim.death_finished]:
@@ -150,9 +150,9 @@ while running:
                   if not (e.state == "dead" and e.anim.death_finished)]
 
     if boss_active and boss:
-        boss.update(dt, player_vec, player)
+        boss.update(dt, player_vec, player, WIDTH, HEIGHT)
         for s in boss.summons[:]:
-            s.update(dt, player_vec, player)
+            s.update(dt, player_vec, player, WIDTH, HEIGHT)
         boss.summons[:] = [s for s in boss.summons
                            if not (s.state == "dead" and s.anim.death_finished)]
 

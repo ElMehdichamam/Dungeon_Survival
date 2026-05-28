@@ -223,7 +223,8 @@ class Enemy:
                 self._knockback_vel = knockback_dir.normalize() * 6
 
     def update(self, dt_ms: float,
-               player_pos: pygame.math.Vector2, player):
+               player_pos: pygame.math.Vector2, player,
+               screen_w: int = 960, screen_h: int = 640):
         if self.state == "dead":
             self.anim.update(dt_ms)
             self.image = self.anim.image(self.direction)
@@ -271,6 +272,12 @@ class Enemy:
                 self._set_state("walk")
             else:
                 self._set_state("idle")
+
+        # Clamp enemy position to map boundaries (keeping entire rect inside)
+        half_w = self.rect.width // 2
+        half_h = self.rect.height // 2
+        self.x = max(half_w, min(screen_w - half_w, self.x))
+        self.y = max(half_h, min(screen_h - half_h, self.y))
 
         self.rect.center = (int(self.x), int(self.y))
         self.anim.update(dt_ms)

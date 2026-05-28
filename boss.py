@@ -3,7 +3,7 @@ import math
 import random
 import os
 
-from enemy import Enemy, _Anim, _make_placeholder
+from enemy import Enemy, _Anim, _make_placeholder, DIR_DOWN, DIR_LEFT, DIR_RIGHT, DIR_UP
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -36,16 +36,17 @@ class Boss:
         frame_h = _make_placeholder(w, h, (220, 80,  80),  "HIT")
         frame_d = _make_placeholder(w, h, (40,  0,   0),   "DEAD")
 
-        self._frames_normal = [frame_n]
-        self._frames_hurt   = [frame_h]
-        self._frames_dead   = [frame_d]
+        self._frames_normal = frame_n
+        self._frames_hurt   = frame_h
+        self._frames_dead   = frame_d
 
+        self.direction = DIR_DOWN
         self.anim  = _Anim(self._frames_normal, 4)
         self.state = "normal"   # normal | hurt | dead
 
-        self.rect        = frame_n.get_rect()
+        self.rect        = frame_n[DIR_DOWN][0].get_rect()
         self.rect.center = (int(self.x), int(self.y))
-        self.image       = self.anim.image
+        self.image       = self.anim.image(self.direction)
 
         self._attack_timer = 0
         self._hurt_timer   = 0
@@ -80,6 +81,10 @@ class Boss:
             move = to.normalize() * self.speed * dt
             self.x += move.x
             self.y += move.y
+            if abs(to.x) >= abs(to.y):
+                self.direction = DIR_RIGHT if to.x > 0 else DIR_LEFT
+            else:
+                self.direction = DIR_DOWN if to.y > 0 else DIR_UP
 
     def _try_attack(self, player, dt_ms: float):
         dist = (pygame.math.Vector2(self.rect.center) -
@@ -105,10 +110,11 @@ class Boss:
                                "r": radius, "life": life, "max_life": life})
 
     def update(self, dt_ms: float,
-               player_pos: pygame.math.Vector2, player):
+               player_pos: pygame.math.Vector2, player,
+               screen_w: int = 960, screen_h: int = 640):
         if self.state == "dead":
             self.anim.update(dt_ms)
-            self.image = self.anim.image
+            self.image = self.anim.image(self.direction)
             return
 
         dt = dt_ms / 1000.0
@@ -137,9 +143,15 @@ class Boss:
             ef["life"] -= dt_ms
         self._effects[:] = [e for e in self._effects if e["life"] > 0]
 
+        # Clamp boss position to map boundaries (keeping entire rect inside)
+        half_w = self.rect.width // 2
+        half_h = self.rect.height // 2
+        self.x = max(half_w, min(screen_w - half_w, self.x))
+        self.y = max(half_h, min(screen_h - half_h, self.y))
+
         self.rect.center = (int(self.x), int(self.y))
         self.anim.update(dt_ms)
-        self.image = self.anim.image
+        self.image = self.anim.image(self.direction)
 
     def _ai_tick(self, dt_ms, player_pos, player):
         """Override for boss-specific AI."""

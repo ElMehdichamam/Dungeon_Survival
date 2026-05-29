@@ -4,13 +4,14 @@ import os
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
-SPRITE_FOLDER = BASE_DIR   # all sprites in the same folder as main.py
+SPRITE_FOLDER = BASE_DIR
 
 sys.path.insert(0, BASE_DIR)
 
 from player import Character
 from enemy import Enemy, WaveManager
 from boss import LichKing, StoneGolem
+from dungeon_map import DungeonMap
 
 # ── Init ──────────────────────────────────────────────────────────────────────
 pygame.init()
@@ -21,25 +22,21 @@ clock   = pygame.time.Clock()
 font    = pygame.font.SysFont("consolas", 15)
 font_lg = pygame.font.SysFont("consolas", 21, bold=True)
 
+# ── Dungeon map ───────────────────────────────────────────────────────────────
+dungeon = DungeonMap("Dungeon1.tmx", scale=2, asset_dir=BASE_DIR)
+dungeon.load()
+
+MAP_W = dungeon.pixel_w   # total map width  in screen pixels
+MAP_H = dungeon.pixel_h   # total map height in screen pixels
+
 # ── Colours ───────────────────────────────────────────────────────────────────
-TILE_A   = (22,  16,  38)
-TILE_B   = (18,  13,  30)
 UI_GOLD  = (240, 210,  80)
 UI_RED   = (220,  60,  60)
 WHITE    = (255, 255, 255)
 
-# ── Tile floor ────────────────────────────────────────────────────────────────
-TILE = 48
-floor_surf = pygame.Surface((WIDTH, HEIGHT))
-for row in range(0, HEIGHT, TILE):
-    for col in range(0, WIDTH, TILE):
-        c = TILE_A if (row // TILE + col // TILE) % 2 == 0 else TILE_B
-        pygame.draw.rect(floor_surf, c, (col, row, TILE, TILE))
-        pygame.draw.rect(floor_surf, (30, 22, 48), (col, row, TILE, TILE), 1)
-
 # ── Player attack config ───────────────────────────────────────────────────────
-PLAYER_DMG    = 30
-PLAYER_RANGE  = 120   # px – how far the J-attack reaches
+PLAYER_DMG   = 30
+PLAYER_RANGE = 120
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def nearest_enemy(pos, enemies, boss, boss_active):
@@ -51,7 +48,8 @@ def nearest_enemy(pos, enemies, boss, boss_active):
     return min(living, key=lambda e: (pygame.math.Vector2(e.rect.center) - pos).length())
 
 def make_wave_mgr(enemies_list):
-    spawn_region = pygame.Rect(60, 60, WIDTH - 120, HEIGHT - 120)
+    # Spawn enemies anywhere on the walkable map, away from the center
+    spawn_region = pygame.Rect(60, 60, MAP_W - 120, MAP_H - 120)
     def on_spawn(etype, x, y):
         enemies_list.append(Enemy(x, y, etype, sprite_folder=SPRITE_FOLDER))
     wm = WaveManager(on_spawn, spawn_region,
@@ -60,12 +58,32 @@ def make_wave_mgr(enemies_list):
     wm.start()
     return wm
 
+# ── Camera ────────────────────────────────────────────────────────────────────
+def get_camera(player_x, player_y):
+    """Return (cam_x, cam_y) so the player is centred on screen."""
+    cx = int(player_x - WIDTH  // 2)
+    cy = int(player_y - HEIGHT // 2)
+    cx = max(0, min(cx, MAP_W - WIDTH))
+    cy = max(0, min(cy, MAP_H - HEIGHT))
+    return cx, cy
+
 # ── Floating damage numbers ───────────────────────────────────────────────────
 dmg_numbers: list[dict] = []
 
 def add_dmg(x, y, amount, color=(255, 60, 60)):
     dmg_numbers.append({"text": f"-{amount}", "x": float(x), "y": float(y),
                          "timer": 900.0, "color": color})
+
+# ── World-to-screen helper ────────────────────────────────────────────────────
+def world_to_screen(wx, wy, cam_x, cam_y):
+    return wx - cam_x, wy - cam_y
+
+# ── Collision helper (shared) ─────────────────────────────────────────────────
+def apply_wall_collision(entity, dungeon: DungeonMap):
+    """Push entity out of solid tiles. Works for player, enemy, and boss."""
+    entity.rect = dungeon.resolve_collision(entity.rect)
+    entity.x    = float(entity.rect.centerx)
+    entity.y    = float(entity.rect.centery)
 
 # ── Restart ───────────────────────────────────────────────────────────────────
 def restart():
@@ -74,11 +92,12 @@ def restart():
     dmg_numbers.clear()
     boss        = None
     boss_active = False
-    player      = Character(x=WIDTH // 2, y=HEIGHT // 2)
+    # Place player near the centre of the map
+    player      = Character(x=MAP_W // 2, y=MAP_H // 2)
     wave_mgr    = make_wave_mgr(enemies)
 
 # ── Initial state ─────────────────────────────────────────────────────────────
-player      = Character(x=WIDTH // 2, y=HEIGHT // 2)
+player      = Character(x=MAP_W // 2, y=MAP_H // 2)
 enemies: list[Enemy] = []
 boss        = None
 boss_active = False
@@ -90,6 +109,9 @@ while running:
     dt   = clock.tick(60)
     keys = pygame.key.get_pressed()
 
+    # Camera (before any draw, based on last frame's player pos)
+    cam_x, cam_y = get_camera(player.x, player.y)
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
@@ -98,10 +120,10 @@ while running:
             if event.key == pygame.K_ESCAPE: running = False
             if event.key == pygame.K_r:      restart()
             if event.key == pygame.K_b:
-                boss        = LichKing(80, 60, sprite_folder=SPRITE_FOLDER)
+                boss        = LichKing(MAP_W // 2 - 200, MAP_H // 2, sprite_folder=SPRITE_FOLDER)
                 boss_active = True
             if event.key == pygame.K_g:
-                boss        = StoneGolem(80, 60, sprite_folder=SPRITE_FOLDER)
+                boss        = StoneGolem(MAP_W // 2 - 200, MAP_H // 2, sprite_folder=SPRITE_FOLDER)
                 boss_active = True
 
             # ── J key → attack nearest enemy in range ──
@@ -113,9 +135,9 @@ while running:
                     if dist <= PLAYER_RANGE:
                         kdir = pygame.math.Vector2(target.rect.center) - player_vec
                         target.take_damage(PLAYER_DMG, kdir)
-                        add_dmg(*target.rect.midtop, PLAYER_DMG)
+                        sx, sy = world_to_screen(*target.rect.midtop, cam_x, cam_y)
+                        add_dmg(sx + cam_x, sy + cam_y, PLAYER_DMG)
 
-                # Also trigger attack animation
                 moving = any(keys[k] for k in (
                     pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN,
                     pygame.K_a,    pygame.K_d,    pygame.K_w,  pygame.K_s,
@@ -129,19 +151,22 @@ while running:
                 else:
                     player.set_state("attack")
 
-        # Other player combat keys
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_k: player.set_state("hurt")
 
     # ── Update ───────────────────────────────────────────────────────────
-    player.update(dt, keys, WIDTH, HEIGHT)
+    # Pass map pixel size as boundaries so entities don't go OOB
+    player.update(dt, keys, MAP_W, MAP_H)
+    apply_wall_collision(player, dungeon)
+
     player_vec = pygame.math.Vector2(player.rect.center)
 
     wave_mgr.register_enemies(enemies)
     wave_mgr.update(dt)
 
     for e in enemies:
-        e.update(dt, player_vec, player, WIDTH, HEIGHT)
+        e.update(dt, player_vec, player, MAP_W, MAP_H)
+        apply_wall_collision(e, dungeon)
 
     # Remove dead enemies after death anim finishes
     for e in [x for x in enemies if x.state == "dead" and x.anim.death_finished]:
@@ -150,9 +175,11 @@ while running:
                   if not (e.state == "dead" and e.anim.death_finished)]
 
     if boss_active and boss:
-        boss.update(dt, player_vec, player, WIDTH, HEIGHT)
+        boss.update(dt, player_vec, player, MAP_W, MAP_H)
+        apply_wall_collision(boss, dungeon)
         for s in boss.summons[:]:
-            s.update(dt, player_vec, player, WIDTH, HEIGHT)
+            s.update(dt, player_vec, player, MAP_W, MAP_H)
+            apply_wall_collision(s, dungeon)
         boss.summons[:] = [s for s in boss.summons
                            if not (s.state == "dead" and s.anim.death_finished)]
 
@@ -161,35 +188,71 @@ while running:
         d["y"]     -= 0.5
     dmg_numbers[:] = [d for d in dmg_numbers if d["timer"] > 0]
 
+    # Recalculate camera after movement + collision resolution
+    cam_x, cam_y = get_camera(player.x, player.y)
+
     # ── Draw ──────────────────────────────────────────────────────────────
-    screen.blit(floor_surf, (0, 0))
+    screen.fill((10, 8, 20))
+    dungeon.update()
+    dungeon.draw(screen, cam_x, cam_y)
+
+    def blit_world(surf, rect):
+        sx = rect.x - cam_x
+        sy = rect.y - cam_y
+        screen.blit(surf, (sx, sy))
+
+    def draw_hbar_world(entity):
+        # Re-draw health bar at camera-adjusted position
+        bw = entity.rect.width
+        bx = entity.rect.left - cam_x
+        by = entity.rect.top  - cam_y - 8
+        ratio = entity.hp / entity.max_hp
+        pygame.draw.rect(screen, (80, 0, 0),     (bx, by, bw, 5))
+        pygame.draw.rect(screen, (60, 200, 60),  (bx, by, int(bw * ratio), 5))
+        pygame.draw.rect(screen, (200, 200, 200),(bx, by, bw, 5), 1)
 
     for e in sorted(enemies, key=lambda x: x.rect.bottom):
-        screen.blit(e.image, e.rect)
-        e.draw_health_bar(screen)
+        blit_world(e.image, e.rect)
+        draw_hbar_world(e)
 
     if boss_active and boss:
-        screen.blit(boss.image, boss.rect)
-        boss.draw_health_bar(screen)
+        blit_world(boss.image, boss.rect)
+        # Boss health bar above sprite
+        bw = boss.rect.width
+        bx = boss.rect.left - cam_x
+        by = boss.rect.top  - cam_y - 10
+        ratio = boss.hp / boss.max_hp
+        pygame.draw.rect(screen, (80, 0, 0),    (bx, by, bw, 8))
+        pygame.draw.rect(screen, (220, 60, 60), (bx, by, int(bw * ratio), 8))
+        pygame.draw.rect(screen, (255,255,255), (bx, by, bw, 8), 1)
         boss.draw_boss_ui(screen, font)
         boss.draw_effects(screen)
         for s in boss.summons:
             if s.is_alive:
-                screen.blit(s.image, s.rect)
-                s.draw_health_bar(screen)
+                blit_world(s.image, s.rect)
+                draw_hbar_world(s)
 
-    player.draw(screen)
+    # Player — drawn at camera-adjusted position
+    player_screen_x = int(player.x) - cam_x
+    player_screen_y = int(player.y) - cam_y
+    frame = player.frames[player.state][player.direction][player.frame_index]
+    if not (player.invincible and int(pygame.time.get_ticks() / 80) % 2 == 0):
+        screen.blit(frame, (player_screen_x - frame.get_width() // 2,
+                             player_screen_y - frame.get_height() // 2))
 
     # Draw attack range ring when J is held
     if keys[pygame.K_j]:
         pygame.draw.circle(screen, (255, 255, 100),
-                           player.rect.center, PLAYER_RANGE, 1)
+                           (player_screen_x, player_screen_y), PLAYER_RANGE, 1)
 
+    # Damage numbers (stored in world coords, converted to screen)
     for d in dmg_numbers:
         alpha = int(255 * d["timer"] / 900)
         txt   = font_lg.render(d["text"], True, d["color"])
         txt.set_alpha(alpha)
-        screen.blit(txt, (int(d["x"]) - txt.get_width() // 2, int(d["y"])))
+        sx = int(d["x"]) - cam_x - txt.get_width() // 2
+        sy = int(d["y"]) - cam_y
+        screen.blit(txt, (sx, sy))
 
     # ── HUD ───────────────────────────────────────────────────────────────
     bar_w = 200

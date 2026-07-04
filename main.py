@@ -2,6 +2,9 @@ import pygame
 import sys
 import os
 
+# Fix pygame.image.load for non-BMP images (SDL2_image not available)
+import _pygame_image_fix
+
 # ── Path setup ────────────────────────────────────────────────────────────────
 BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
 SPRITE_FOLDER = BASE_DIR

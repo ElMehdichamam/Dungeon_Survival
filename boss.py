@@ -30,6 +30,8 @@ class Boss:
         self.speed  = float(self.SPEED)
         self.dmg    = self.DMG
         self.phase  = 1
+        # FIX BUG-05: store sprite_folder so summons can use it
+        self._sprite_folder = sprite_folder
 
         # Placeholder frames (replace with real sprites via sprite_folder)
         frame_n = _make_placeholder(w, h, self.COLOR,      self.NAME)
@@ -136,7 +138,7 @@ class Boss:
             self._move_toward(player_pos, dt)
             self._try_attack(player, dt_ms)
             self._check_phase()
-            self._ai_tick(dt_ms, player_pos, player)
+            self._ai_tick(dt_ms, player_pos, player, screen_w, screen_h)
 
         # Effects
         for ef in self._effects:
@@ -153,7 +155,7 @@ class Boss:
         self.anim.update(dt_ms)
         self.image = self.anim.image(self.direction)
 
-    def _ai_tick(self, dt_ms, player_pos, player):
+    def _ai_tick(self, dt_ms, player_pos, player, screen_w=960, screen_h=640):
         """Override for boss-specific AI."""
         pass
 
@@ -181,12 +183,13 @@ class Boss:
         surface.blit(label, (bx + bar_w // 2 - label.get_width() // 2,
                               by - label.get_height() - 2))
 
-    def draw_effects(self, surface: pygame.Surface):
+    def draw_effects(self, surface: pygame.Surface, cam_x: int = 0, cam_y: int = 0):
+        # FIX BUG-07/08: apply camera offset so effects render at correct screen position
         for ef in self._effects:
             alpha = int(200 * ef["life"] / ef["max_life"])
             s = pygame.Surface((ef["r"] * 2, ef["r"] * 2), pygame.SRCALPHA)
             pygame.draw.circle(s, (*ef["color"], alpha), (ef["r"], ef["r"]), ef["r"])
-            surface.blit(s, (ef["x"] - ef["r"], ef["y"] - ef["r"]))
+            surface.blit(s, (ef["x"] - ef["r"] - cam_x, ef["y"] - ef["r"] - cam_y))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -213,7 +216,7 @@ class LichKing(Boss):
         self._summon_timer   = 2500
         self._teleport_timer = 4000
 
-    def _ai_tick(self, dt_ms, player_pos, player):
+    def _ai_tick(self, dt_ms, player_pos, player, screen_w=960, screen_h=640):
         # Summon skeletons
         self._summon_timer -= dt_ms
         if self._summon_timer <= 0:
@@ -221,7 +224,8 @@ class LichKing(Boss):
             for _ in range(2 if self.phase == 1 else 3):
                 ox = self.x + random.randint(-80, 80)
                 oy = self.y + random.randint(-80, 80)
-                self.summons.append(Enemy(ox, oy, "skeleton"))
+                # FIX BUG-05: pass sprite_folder so summons can load real sprites
+                self.summons.append(Enemy(ox, oy, "skeleton", sprite_folder=self._sprite_folder))
             self._add_effect(self.x, self.y, (120, 0, 200), radius=40, life=500)
 
         # Teleport
@@ -233,6 +237,12 @@ class LichKing(Boss):
             dist  = random.uniform(150, 280)
             self.x = player_pos.x + math.cos(angle) * dist
             self.y = player_pos.y + math.sin(angle) * dist
+            # FIX BUG-04: clamp position BEFORE creating effect so the visual
+            # appears at the actual landing spot, not the unclamped position
+            half_w = self.rect.width // 2
+            half_h = self.rect.height // 2
+            self.x = max(half_w, min(self.x, screen_w - half_w))
+            self.y = max(half_h, min(self.y, screen_h - half_h))
             self._add_effect(self.x, self.y, (200, 100, 255), radius=50, life=600)
 
         # Phase 2: shoot orbs (just deals damage if very close)
@@ -272,7 +282,7 @@ class StoneGolem(Boss):
         self._slam_timer = 2000
         self.dmg         = int(self.dmg * 1.5)
 
-    def _ai_tick(self, dt_ms, player_pos, player):
+    def _ai_tick(self, dt_ms, player_pos, player, screen_w=960, screen_h=640):
         # Ground slam – damages player if close
         self._slam_timer -= dt_ms
         if self._slam_timer <= 0:
@@ -293,5 +303,6 @@ class StoneGolem(Boss):
             for spread in [-0.3, 0, 0.3]:
                 ox = self.x + math.cos(angle + spread) * 60
                 oy = self.y + math.sin(angle + spread) * 60
-                self.summons.append(Enemy(ox, oy, "orc"))
+                # FIX BUG-05: pass sprite_folder so summons can load real sprites
+                self.summons.append(Enemy(ox, oy, "orc", sprite_folder=self._sprite_folder))
             self._add_effect(self.x, self.y, (200, 160, 80), radius=45, life=400)

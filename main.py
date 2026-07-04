@@ -28,6 +28,7 @@ dungeon.load()
 
 MAP_W = dungeon.pixel_w   # total map width  in screen pixels
 MAP_H = dungeon.pixel_h   # total map height in screen pixels
+print(f"MAP size: {MAP_W}x{MAP_H}")
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 UI_GOLD  = (240, 210,  80)
@@ -80,10 +81,17 @@ def world_to_screen(wx, wy, cam_x, cam_y):
 
 # ── Collision helper (shared) ─────────────────────────────────────────────────
 def apply_wall_collision(entity, dungeon: DungeonMap):
-    """Push entity out of solid tiles. Works for player, enemy, and boss."""
-    entity.rect = dungeon.resolve_collision(entity.rect)
-    entity.x    = float(entity.rect.centerx)
-    entity.y    = float(entity.rect.centery)
+    """Push entity out of solid tiles. Works for player, enemy, and boss.
+
+    FIX BUG-10: record which axis was reverted so enemy AI can slide along the
+    wall on the next frame instead of mashing into it.
+    """
+    pre_x, pre_y = entity.x, entity.y
+    entity.rect  = dungeon.resolve_collision(entity.rect)
+    entity.x     = float(entity.rect.centerx)
+    entity.y     = float(entity.rect.centery)
+    entity._blocked_x = abs(entity.x - pre_x) > 0.5
+    entity._blocked_y = abs(entity.y - pre_y) > 0.5
 
 # ── Restart ───────────────────────────────────────────────────────────────────
 def restart():
@@ -151,7 +159,7 @@ while running:
                 else:
                     player.set_state("attack")
 
-        if event.type == pygame.KEYDOWN:
+            # FIX BUG-06: merged duplicate KEYDOWN block
             if event.key == pygame.K_k: player.set_state("hurt")
 
     # ── Update ───────────────────────────────────────────────────────────
@@ -226,7 +234,7 @@ while running:
         pygame.draw.rect(screen, (220, 60, 60), (bx, by, int(bw * ratio), 8))
         pygame.draw.rect(screen, (255,255,255), (bx, by, bw, 8), 1)
         boss.draw_boss_ui(screen, font)
-        boss.draw_effects(screen)
+        boss.draw_effects(screen, cam_x, cam_y)  # FIX BUG-07/08: pass camera offset
         for s in boss.summons:
             if s.is_alive:
                 blit_world(s.image, s.rect)

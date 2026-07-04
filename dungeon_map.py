@@ -189,8 +189,15 @@ class DungeonMap:
             cy = r.bottom - HH - 1          # placed at the feet
             return pygame.Rect(cx - HW, cy - HH, HW * 2, HH * 2)
 
+        # FIX BUG-11: shrink each solid tile to ~60% so the player can walk
+        # closer to walls and squeeze through doorways.
+        SOLID_SCALE = 0.6
+        solid_size  = max(1, int(ts * SOLID_SCALE))
+        pad         = (ts - solid_size) // 2
+
         def _solid_rects_near(h):
-            """Return tile rects that the hitbox h currently overlaps."""
+            """Return tile rects (shrunk to SOLID_SCALE of a full tile)
+            that the hitbox h currently overlaps."""
             left_t  = (h.left   // ts) + self.world_x0
             right_t = (h.right  // ts) + self.world_x0
             top_t   = (h.top    // ts) + self.world_y0
@@ -200,9 +207,9 @@ class DungeonMap:
                 for tx in range(left_t, right_t + 1):
                     if (tx, ty) in self._solid_tiles:
                         out.append(pygame.Rect(
-                            (tx - self.world_x0) * ts,
-                            (ty - self.world_y0) * ts,
-                            ts, ts,
+                            (tx - self.world_x0) * ts + pad,
+                            (ty - self.world_y0) * ts + pad,
+                            solid_size, solid_size,
                         ))
             return out
 
@@ -235,15 +242,21 @@ class DungeonMap:
     def _build_collision_set(self):
         """Solid = Walls + water tiles (unwalkable)."""
         SOLID_LAYERS = {'Walls', 'water_floor3', 'walls_under_water'}
+        # FIX BUG-11: surface the TMX layer names so a future mismatch is
+        # immediately visible at boot.
+        all_layer_names = [l['name'] for l in self.layers]
+        print(f"[DungeonMap] TMX layers: {all_layer_names}")
+        print(f"[DungeonMap] Configured SOLID_LAYERS: {sorted(SOLID_LAYERS)}")
+        missing = SOLID_LAYERS - set(all_layer_names)
+        if missing:
+            print(f"[DungeonMap] WARNING: expected solid layers not found in TMX: {missing}")
+
         self._solid_tiles = set()
         for layer in self.layers:
             if layer['name'] in SOLID_LAYERS:
                 self._solid_tiles.update(layer['tiles'].keys())
-        print(f"[DungeonMap] Solid tiles: {len(self._solid_tiles)} from layers: {[l['name'] for l in self.layers if l['name'] in SOLID_LAYERS]}")
-        # Print first 10 solid tiles for debugging
-        if self._solid_tiles:
-            sample = list(self._solid_tiles)[:10]
-            print(f"[DungeonMap] Sample solid tiles: {sample}")
+        matched = [l['name'] for l in self.layers if l['name'] in SOLID_LAYERS]
+        print(f"[DungeonMap] Solid tiles: {len(self._solid_tiles)} from layers: {matched}")
 
     def _load_sheets(self):
         for ts in self.tilesets:

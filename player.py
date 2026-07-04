@@ -127,6 +127,9 @@ class Character:
         self.hp = max(0, self.hp - amount)
         self.invincible       = True
         self.invincible_timer = self.INVINCIBLE_MS
+        # FIX BUG-02: force-unlock so hurt/death state isn't blocked
+        # by an in-progress attack animation
+        self.locked = False
         if self.hp > 0:
             self.set_state("hurt")
         else:

@@ -56,7 +56,7 @@ GOBLIN_SHEETS = {
     "walk":        ("orc1_walk_with_shadow.png",              6),
     "run":         ("orc1_run_with_shadow.png",               8),
     "attack":      ("orc1_attack_with_shadow.png",            8),
-    "walk_attack": ("orc1_walk_attack_front__with_shadow.png",6),
+    "walk_attack": ("orc1_walk_attack_front _with_shadow.png",6),  # FIX BUG-03: filename had double underscore, actual file has space+underscore
     "run_attack":  ("orc1_run_attack_front_with_shadow.png",  8),
     "hurt":        ("orc1_hurt_with_shadow.png",              6),
     "death":       ("orc1_death_with_shadow.png",             8),
@@ -123,6 +123,32 @@ PLACEHOLDER_COLORS = {
     "mage":     (120,  60, 200),
 }
 
+# FIX BUG-09: multiplicative tint applied per type so skeleton/orc/mage
+# can reuse the (only available) goblin orc1_* sheets and still look distinct.
+# None = no tint (original goblin colour).
+ENEMY_TINTS = {
+    "goblin":   None,
+    "skeleton": (210, 210, 230),   # pale / cool
+    "orc":      (150, 220, 150),   # green
+    "mage":     (180, 140, 240),   # purple
+}
+
+# Module-level cache so multiple enemies of the same type don't reload PNGs.
+_SHEET_CACHE: dict = {}
+
+
+def _tint_frames(frames_by_dir, color):
+    """Return a copy of frames_by_dir with multiplicative tint applied."""
+    out = {}
+    for d, frames in frames_by_dir.items():
+        tinted = []
+        for f in frames:
+            cp = f.copy()
+            cp.fill(color, special_flags=pygame.BLEND_RGBA_MULT)
+            tinted.append(cp)
+        out[d] = tinted
+    return out
+
 
 class Enemy:
     AGGRO_RANGE  = 400
@@ -156,13 +182,17 @@ class Enemy:
             "hurt":        _Anim(self._sheets["hurt"],        10, False),
             "death":       _Anim(self._sheets["death"],       8,  False),
         }
+        # FIX BUG-01: "dead" alias so take_damage("dead") finds a valid anim
+        self._anims["dead"] = self._anims["death"]
 
         self.state     = "walk"
         self.direction = DIR_DOWN
         self.anim      = self._anims["walk"]
 
-        fw = FRAME_W * (GOBLIN_SCALE if etype == "goblin" else 1)
-        fh = FRAME_H * (GOBLIN_SCALE if etype == "goblin" else 1)
+        # FIX BUG-09: all types reuse the goblin sheets, so the rect uses the
+        # same scale regardless of etype.
+        fw = FRAME_W * GOBLIN_SCALE
+        fh = FRAME_H * GOBLIN_SCALE
         self.rect        = pygame.Rect(0, 0, fw, fh)
         self.rect.center = (int(self.x), int(self.y))
         self.image       = self.anim.image(self.direction)
@@ -173,27 +203,37 @@ class Enemy:
 
     # ── sprite loading ────────────────────────────────────────────────────
     def _load_sprites(self, etype, folder):
+        """
+        FIX BUG-09: every type now reuses the orc1_* sheets (the only ones
+        available). Per-type tint differentiates skeleton/orc/mage from goblin.
+        Sheets are cached at module scope so spawning N enemies doesn't hit
+        disk N times.
+        """
         sheets = {}
-        if etype == "goblin" and folder:
-            scale = GOBLIN_SCALE
-            for anim_name, (filename, n_cols) in GOBLIN_SHEETS.items():
+        if not folder:
+            color = PLACEHOLDER_COLORS.get(etype, (100, 100, 100))
+            ph    = _make_placeholder(FRAME_W * GOBLIN_SCALE, FRAME_H * GOBLIN_SCALE,
+                                      color, etype[:3].upper())
+            return {anim_name: ph for anim_name in GOBLIN_SHEETS}
+
+        scale = GOBLIN_SCALE
+        tint  = ENEMY_TINTS.get(etype)
+        for anim_name, (filename, n_cols) in GOBLIN_SHEETS.items():
+            cache_key = (filename, scale)
+            base = _SHEET_CACHE.get(cache_key)
+            if base is None:
                 path = os.path.join(folder, filename)
                 if os.path.exists(path):
                     try:
-                        sheets[anim_name] = _load_sheet(path, n_cols, scale)
-                        continue
+                        base = _load_sheet(path, n_cols, scale)
                     except Exception:
-                        pass
-                # fallback placeholder
-                sheets[anim_name] = _make_placeholder(
-                    FRAME_W * scale, FRAME_H * scale,
-                    PLACEHOLDER_COLORS.get(etype, (100, 100, 100)), etype[:3].upper())
-        else:
-            # Non-goblin: all placeholder
-            color = PLACEHOLDER_COLORS.get(etype, (100, 100, 100))
-            ph    = _make_placeholder(48, 56, color, etype[:3].upper())
-            for anim_name in GOBLIN_SHEETS:
-                sheets[anim_name] = ph
+                        base = None
+                if base is None:
+                    base = _make_placeholder(
+                        FRAME_W * scale, FRAME_H * scale,
+                        PLACEHOLDER_COLORS.get("goblin"), "GOB")
+                _SHEET_CACHE[cache_key] = base
+            sheets[anim_name] = _tint_frames(base, tint) if tint else base
         return sheets
 
     # ── public API ────────────────────────────────────────────────────────
@@ -215,7 +255,8 @@ class Enemy:
         self.hp -= amount
         if self.hp <= 0:
             self.hp = 0
-            self._set_state("death")
+            # FIX BUG-01: use "dead" state so is_alive, update(), and main.py removal all match
+            self._set_state("dead")
         else:
             self._hurt_timer = 300
             self._set_state("hurt")
@@ -267,6 +308,24 @@ class Enemy:
                 self._set_state("idle")
             elif dist < self.AGGRO_RANGE:
                 move = to_player.normalize() * self.speed * dt
+                # FIX BUG-10: if a wall blocked us last frame, slide along it
+                # (zero the blocked axis; if both axes were blocked we're in a
+                # corner — bias perpendicular to keep moving instead of jamming).
+                bx = getattr(self, "_blocked_x", False)
+                by = getattr(self, "_blocked_y", False)
+                if bx and not by:
+                    move.x = 0
+                    if abs(move.y) < 0.1:
+                        move.y = self.speed * dt * (1 if random.random() < 0.5 else -1)
+                elif by and not bx:
+                    move.y = 0
+                    if abs(move.x) < 0.1:
+                        move.x = self.speed * dt * (1 if random.random() < 0.5 else -1)
+                elif bx and by:
+                    if abs(to_player.x) >= abs(to_player.y):
+                        move.x, move.y = 0, self.speed * dt * (1 if random.random() < 0.5 else -1)
+                    else:
+                        move.x, move.y = self.speed * dt * (1 if random.random() < 0.5 else -1), 0
                 self.x += move.x
                 self.y += move.y
                 self._set_state("walk")
